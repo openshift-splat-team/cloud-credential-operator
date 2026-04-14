@@ -1,7 +1,6 @@
 package actuator
 
 import (
-	"encoding/base64"
 	"testing"
 )
 
@@ -135,14 +134,10 @@ func TestMultiVCenterBinding_MachineAPIToVC1(t *testing.T) {
 		t.Errorf("machine-api secret missing key: %s", passwordKey)
 	}
 
-	// Decode and verify username
-	encodedUsername := string(machineAPISecret.Data[usernameKey])
-	decodedUsername, err := base64.StdEncoding.DecodeString(encodedUsername)
-	if err != nil {
-		t.Fatalf("failed to decode username: %v", err)
-	}
-	if string(decodedUsername) != "machine-api@vsphere.local" {
-		t.Errorf("expected username 'machine-api@vsphere.local', got '%s'", string(decodedUsername))
+	// Verify username (raw bytes, Kubernetes handles base64 encoding)
+	username := string(machineAPISecret.Data[usernameKey])
+	if username != "machine-api@vsphere.local" {
+		t.Errorf("expected username 'machine-api@vsphere.local', got '%s'", username)
 	}
 }
 
@@ -195,14 +190,10 @@ func TestMultiVCenterBinding_CSIToVC2(t *testing.T) {
 		t.Errorf("csi secret missing key: %s", passwordKey)
 	}
 
-	// Decode and verify username
-	encodedUsername := string(csiSecret.Data[usernameKey])
-	decodedUsername, err := base64.StdEncoding.DecodeString(encodedUsername)
-	if err != nil {
-		t.Fatalf("failed to decode username: %v", err)
-	}
-	if string(decodedUsername) != "csi-driver@vsphere.local" {
-		t.Errorf("expected username 'csi-driver@vsphere.local', got '%s'", string(decodedUsername))
+	// Verify username (raw bytes, Kubernetes handles base64 encoding)
+	username := string(csiSecret.Data[usernameKey])
+	if username != "csi-driver@vsphere.local" {
+		t.Errorf("expected username 'csi-driver@vsphere.local', got '%s'", username)
 	}
 }
 

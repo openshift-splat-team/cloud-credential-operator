@@ -1,7 +1,6 @@
 package actuator
 
 import (
-	"encoding/base64"
 	"fmt"
 )
 
@@ -27,8 +26,6 @@ type AccountCredentials struct {
 // Multi-vCenter mode is detected when any component specifies a vCenter override.
 // In multi-vCenter mode, secrets use FQDN-keyed format (vcenter1.example.com.username)
 // instead of simple keys (username/password).
-//
-// Note: AccountCredentials type is defined in actuator_test.go from Story #5.
 func isMultiVCenterMode(componentCreds map[string]*AccountCredentials) bool {
 	for _, cred := range componentCreds {
 		if cred != nil && cred.VCenter != "" {
@@ -85,12 +82,12 @@ func createComponentSecrets(componentCreds map[string]*AccountCredentials) (map[
 			// Multi-vCenter mode: use FQDN-keyed credentials
 			usernameKey := fmt.Sprintf("%s.username", cred.VCenter)
 			passwordKey := fmt.Sprintf("%s.password", cred.VCenter)
-			secretData[usernameKey] = []byte(base64.StdEncoding.EncodeToString([]byte(cred.Username)))
-			secretData[passwordKey] = []byte(base64.StdEncoding.EncodeToString([]byte(cred.Password)))
+			secretData[usernameKey] = []byte(cred.Username)
+			secretData[passwordKey] = []byte(cred.Password)
 		} else {
 			// Single-vCenter mode: use simple keys
-			secretData["username"] = []byte(base64.StdEncoding.EncodeToString([]byte(cred.Username)))
-			secretData["password"] = []byte(base64.StdEncoding.EncodeToString([]byte(cred.Password)))
+			secretData["username"] = []byte(cred.Username)
+			secretData["password"] = []byte(cred.Password)
 		}
 
 		secret := &Secret{
