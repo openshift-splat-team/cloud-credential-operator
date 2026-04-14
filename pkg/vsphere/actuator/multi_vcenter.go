@@ -5,6 +5,16 @@ import (
 	"fmt"
 )
 
+// ComponentCredentials represents per-component vSphere credentials
+// This structure allows each OpenShift component to use different vSphere accounts
+// with different privilege levels according to the principle of least privilege.
+type ComponentCredentials struct {
+	MachineAPI      *AccountCredentials
+	CSIDriver       *AccountCredentials
+	CloudController *AccountCredentials
+	Diagnostics     *AccountCredentials
+}
+
 // AccountCredentials represents credentials for a single component account with optional vCenter override.
 // This type is used for both the installer and CCO to support multi-vCenter topologies.
 type AccountCredentials struct {

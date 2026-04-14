@@ -376,3 +376,79 @@ func (a *VSphereActuator) IsTimedTokenCluster(c client.Client, ctx context.Conte
 func (a *VSphereActuator) Upgradeable(mode operatorv1.CloudCredentialsMode) *configv1.ClusterOperatorStatusCondition {
 	return utils.UpgradeableCheck(a.RootCredClient, mode, a.GetCredentialsRootSecretLocation())
 }
+
+// CreateComponentSecrets generates per-component vSphere credential secrets for multi-account support.
+// This method integrates the standalone secret generation logic with the VSphereActuator.
+//
+// Parameters:
+//   - ctx: Context for Kubernetes API operations
+//   - componentCreds: Per-component credentials structure
+//   - defaultVCenter: Default vCenter FQDN (used when component doesn't specify override)
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
+//
+// The method creates component-specific secrets in their respective namespaces:
+//   - machine-api-vsphere-credentials (openshift-machine-api)
+//   - vsphere-csi-credentials (openshift-cluster-csi-drivers)
+//   - vsphere-ccm-credentials (openshift-cloud-controller-manager)
+//   - vsphere-diagnostics-credentials (openshift-config)
+//
+// Secrets use FQDN-keyed format (vcenter.example.com.username) in multi-vCenter mode,
+// or simple keys (username/password) in single-vCenter mode.
+func (a *VSphereActuator) CreateComponentSecrets(ctx context.Context, componentCreds *ComponentCredentials, defaultVCenter string) error {
+	if componentCreds == nil {
+		// Passthrough mode: no per-component credentials configured
+		return nil
+	}
+
+	// Convert ComponentCredentials struct to map for standalone function
+	componentCredsMap := map[string]*AccountCredentials{
+		"machineAPI":      componentCreds.MachineAPI,
+		"csiDriver":       componentCreds.CSIDriver,
+		"cloudController": componentCreds.CloudController,
+		"diagnostics":     componentCreds.Diagnostics,
+	}
+
+	// Generate secrets using standalone function
+	secrets, err := createComponentSecrets(componentCredsMap)
+	if err != nil {
+		return fmt.Errorf("failed to generate component secrets: %w", err)
+	}
+
+	// Create Kubernetes secrets for each component
+	for componentName, secret := range secrets {
+		if secret == nil {
+			continue
+		}
+
+		// Convert our simplified Secret to corev1.Secret
+		k8sSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secret.Name,
+				Namespace: secret.Namespace,
+			},
+			Data: secret.Data,
+		}
+
+		// Create or update the secret using the actuator's client
+		err = a.syncTargetSecret(ctx, &minterv1.CredentialsRequest{
+			Spec: minterv1.CredentialsRequestSpec{
+				SecretRef: corev1.ObjectReference{
+					Name:      secret.Name,
+					Namespace: secret.Namespace,
+				},
+			},
+		}, k8sSecret.Data, a.getLogger(&minterv1.CredentialsRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "component-" + componentName,
+				Namespace: "openshift-cloud-credential-operator",
+			},
+		}))
+		if err != nil {
+			return fmt.Errorf("failed to create secret %s/%s: %w", secret.Namespace, secret.Name, err)
+		}
+	}
+
+	return nil
+}
