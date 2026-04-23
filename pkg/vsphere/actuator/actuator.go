@@ -273,6 +273,24 @@ func (a *VSphereActuator) getLogger(cr *minterv1.CredentialsRequest) log.FieldLo
 	})
 }
 
+// getComponentSecretName returns the component-specific secret name based on the target namespace
+func (a *VSphereActuator) getComponentSecretName(cr *minterv1.CredentialsRequest) string {
+	targetNamespace := cr.Spec.SecretRef.Namespace
+
+	switch targetNamespace {
+	case "openshift-machine-api":
+		return constants.VSphereMachineAPICredSecretName
+	case "openshift-cluster-csi-drivers":
+		return constants.VSphereStorageCredSecretName
+	case "openshift-cloud-controller-manager":
+		return constants.VSphereCloudControllerCredSecretName
+	case "openshift-config":
+		return constants.VSphereDiagnosticsCredSecretName
+	default:
+		return ""
+	}
+}
+
 func (a *VSphereActuator) syncTargetSecret(ctx context.Context, cr *minterv1.CredentialsRequest, secretData map[string][]byte, logger log.FieldLogger) error {
 	sLog := logger.WithFields(log.Fields{
 		"targetSecret": fmt.Sprintf("%s/%s", cr.Spec.SecretRef.Namespace, cr.Spec.SecretRef.Name),
@@ -319,6 +337,33 @@ func (a *VSphereActuator) GetCredentialsRootSecretLocation() types.NamespacedNam
 
 func (a *VSphereActuator) GetCredentialsRootSecret(ctx context.Context, cr *minterv1.CredentialsRequest) (*corev1.Secret, error) {
 	logger := a.getLogger(cr)
+
+	// Try to get component-specific secret first
+	componentSecretName := a.getComponentSecretName(cr)
+	if componentSecretName != "" {
+		componentSecret := &corev1.Secret{}
+		componentSecretLocation := types.NamespacedName{
+			Namespace: constants.CloudCredSecretNamespace,
+			Name:      componentSecretName,
+		}
+
+		if err := a.RootCredClient.Get(ctx, componentSecretLocation, componentSecret); err == nil {
+			logger.WithField("componentSecret", componentSecretName).Debug("using component-specific credential")
+			return componentSecret, nil
+		} else if !errors.IsNotFound(err) {
+			// If error is not NotFound, return the error
+			msg := "error fetching component-specific credential"
+			logger.WithError(err).Error(msg)
+			return nil, &actuatoriface.ActuatorError{
+				ErrReason: minterv1.CredentialsProvisionFailure,
+				Message:   fmt.Sprintf("%v: %v", msg, err),
+			}
+		}
+		// If NotFound, fall through to shared credential
+		logger.WithField("componentSecret", componentSecretName).Debug("component-specific credential not found, falling back to shared credential")
+	}
+
+	// Fall back to shared credential
 	cloudCredSecret := &corev1.Secret{}
 	if err := a.RootCredClient.Get(ctx, a.GetCredentialsRootSecretLocation(), cloudCredSecret); err != nil {
 		msg := "unable to fetch root cloud cred secret"
