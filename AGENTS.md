@@ -1,81 +1,110 @@
-# AGENTS.md
+# cloud-credential-operator - AI Navigation
 
-Instructions for AI agents working on the Cloud Credential Operator project.
+**Repository:** https://github.com/openshift-splat-team/cloud-credential-operator
+**Last Updated:** 2026-05-01
 
-## Project Overview
-The Cloud Credential Operator (CCO) is an OpenShift Operator that manages cloud provider credentials. It allows other Operators to request credentials with specific permissions via `CredentialsRequest` custom resources.
+---
 
-## Common development commands
-The project uses `make` for automation.
+## Quick Start
 
-### Development
-```bash
-make update # updates generated code
-make build # compiles the project binaries
-make clean # cleans up build artifacts
+This is **Tier 2** project-specific documentation for cloud-credential-operator.
+
+- **New to this project?** → Start with [Development Guide](ai-docs/cloud-credential-operator_DEVELOPMENT.md)
+- **Writing tests?** → See [Testing Guide](ai-docs/cloud-credential-operator_TESTING.md)
+- **Understanding architecture?** → Read [Components Overview](ai-docs/architecture/components.md)
+- **Need context on decisions?** → Browse [ADRs](ai-docs/decisions/)
+
+For **team-level** workflows, status transitions, and role responsibilities, see the team repository.
+
+---
+
+## CRITICAL: Retrieval Strategy
+
+**IMPORTANT**: Prefer retrieval-led reasoning over pre-training-led reasoning.
+
+When working on cloud-credential-operator:
+- ✅ **DO**: Read project-specific docs from `./ai-docs/` first
+- ✅ **DO**: Check development workflow in `./ai-docs/cloud-credential-operator_DEVELOPMENT.md`
+- ✅ **DO**: Understand architecture in `./ai-docs/architecture/components.md`
+- ✅ **DO**: Review ADRs for context on past decisions
+- ❌ **DON'T**: Rely solely on training data
+- ❌ **DON'T**: Guess at project architecture or conventions
+
+For team workflows (sprint process, status transitions, etc.), see `../../team/ai-docs/`.
+
+---
+
+## Quick Navigation by Task
+
+| Task | Start Here | Then Read |
+|------|-----------|-----------|
+| **Local development** | [Development Guide](ai-docs/cloud-credential-operator_DEVELOPMENT.md) | [Testing Guide](ai-docs/cloud-credential-operator_TESTING.md) |
+| **Running tests** | [Testing Guide](ai-docs/cloud-credential-operator_TESTING.md) | [Components](ai-docs/architecture/components.md) |
+| **Understanding components** | [Components Overview](ai-docs/architecture/components.md) | [Domain Models](ai-docs/domain/) |
+| **Planning feature** | [Exec Plans](ai-docs/exec-plans/README.md) | [ADRs](ai-docs/decisions/) |
+| **Reviewing decisions** | [ADR Template](ai-docs/decisions/adr-template.md) | Existing ADRs |
+
+---
+
+## Technology Stack
+
+**Languages:** Go  
+**Frameworks:** Kubernetes, controller-runtime  
+**Build Systems:** Make, Docker
+
+---
+
+## Documentation Structure
+
+```
+ai-docs/
+├── cloud-credential-operator_DEVELOPMENT.md  # Build, test, develop
+├── cloud-credential-operator_TESTING.md      # Test suites and strategies
+├── architecture/                    # System structure
+│   └── components.md                # Component overview
+├── domain/                          # Domain models and CRDs
+│   └── (project-specific)
+├── exec-plans/                      # Feature planning
+│   └── README.md
+├── decisions/                       # Architectural Decision Records
+│   ├── adr-template.md
+│   └── adr-NNNN-*.md
+└── references/                      # External references
+    └── ecosystem.md
 ```
 
-### Testing
-```bash
-make test # runs unit tests
-make verify # verifies generated code and formatting.
-```
+---
 
-## Architecture
+## Knowledge Tiers
 
-### File Structure
+**Tier 1: Platform-Wide** (Team repository)
+- Operator development patterns
+- Testing pyramid and practices
+- CI/CD workflows (Prow, GitHub Actions)
+- Team process (sprint, status transitions, roles)
 
-- **`bindata/`**: Static assets compiled into the binary (e.g., default CredentialsRequests).
-- **`cmd/`**: Binary entry points
-- **`docs/`**: Developer and user documentation.
-- **`hack/`**: Developer tools.
-- **`manifests/`**: Kubernetes YAML manifests for deploying the operator.
-- **`pkg/`**: Package Source Code
-- **`test/`**: Code additional testing
+→ See `../../team/ai-docs/` for team-level documentation
 
-#### Entry Points (`cmd/`)
-- **`cmd/cloud-credential-operator/`**: Main entry point for the operator.
-- **`cmd/ccoctl/`**: CLI tool for creating and managing cloud credentials outside the cluster.
+**Tier 2: Project-Specific** (This repository)
+- cloud-credential-operator components and architecture
+- Project-specific development workflow
+- Test suites unique to this project
+- Architectural decisions for this project
 
-#### Package Source Code (`pkg/`)
-- **`pkg/apis/`**: Kubernetes Custom Resource Definitions (CRDs) and API types.
-- **`pkg/assets/`**: Generated assets.
-- **`pkg/cmd/`**: Logic for command-line commands.
-- **`pkg/operator/`**: Operator Controllers.
-- **`pkg/{aws,azure,gcp,ibmcloud,kubevirt,openstack,ovirt,vsphere}/`**: Cloud provider-specific implementations.
-- **`pkg/util/`**: Utility functions.
-- **`pkg/version/`**: Logic for Operator version.
+→ See `./ai-docs/` for project-level documentation
 
-#### Operator Controllers (`pkg/operator/`)
-- **`pkg/operator/cleanup`**: Cleans up stale `CredentialRequests`
-- **`pkg/operator/credentialsrequest`**: Reconciles CredentialRequests, creating and updating cloud credentials as necessary while ensuring the associated Kubernetes secret remains up to date.
-- **`pkg/operator/loglevel`**: Ensures the Operator is using the latest log level as specified in the operator config manifest.
-- **`pkg/operator/metrics`**: Calculates and publishes Prometheus metrics.
-- **`pkg/operator/podidentity`**: Ensures the pod identity webhook is deployed when appropriate.
-- **`pkg/operator/secretannotator`**: Ensures the `cloudcredential.openshift.io/mode` annotation is set on the root credential secret based on the credentials mode and permissions granted to the cloud credential specified in the root credential.
-- **`pkg/operator/status`**: Reconciles the status (`Available`, `Degraded`, `Progressing`, and `Upgradeable`) of the Operator based on the status of all CredentialRequests.
+---
 
-### Operator Modes
-The actions preformed by the operator for each `CredentialRequest` is based on the mode of the operator.
+## Project Context
 
-- **`Manual`** The operator will not manage cloud credentials or associated secrets.
-- **`Mint`**: The operator will create and manage cloud credentials and associated secrets.
-- **`Passthrough`**: The operator will reuse the root credential for all associated secrets.
+For team workflows, sprint process, and status transitions, see:
+- Team repository: `../../team/`
+- Team ai-docs: `../../team/ai-docs/`
+- Team workflows: `../../team/ai-docs/workflows/`
+- Status transitions: `../../team/ai-docs/statuses/`
 
-### Short Term Tokens
-When in Manual mode, the operator can be further configured to integrate with cloud providers using short term token authentication (OIDC). The `ccoctl` binary is designed to run off of the cluster. It configures the cloud credentials requested by the `CredentialRequests` and produces the secret manifests that are to be applied to the cluster.
+---
 
-## Git Commit Instructions
-- All commits should follow a standard format to ensure clarity and traceability.
-- Title format: <Subsystem>: <Title>
-- Include a footer annotation when AI tools were used to generate or significantly assist.
+**Navigation**: Start with [Development Guide](ai-docs/cloud-credential-operator_DEVELOPMENT.md) for project setup and workflow.
 
-### Example
-```text
-ccoctl: Add support for new cloud provider region
-
-This updates the AWS provider to support the new region by adding it to the
-validation list and updating the relevant constants.
-
-Assisted-by: <AI Model Name>`
-```
+**GitHub**: https://github.com/openshift-splat-team/cloud-credential-operator
