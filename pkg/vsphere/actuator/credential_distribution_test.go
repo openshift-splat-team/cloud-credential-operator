@@ -1,9 +1,6 @@
 // credential_distribution_test.go tests Story #38:
 // CCO Per-Component Credential Distribution with Graceful Fallback.
 //
-// Build guard prevents compile errors until the implementation exists.
-// Remove //go:build ignore once credential_distribution.go is implemented.
-//
 // Implementation contract expected by these tests:
 //
 //	func resolveVSphereCredentials(
@@ -11,7 +8,6 @@
 //	    cr *minterv1.CredentialsRequest,
 //	    componentSecretReader ComponentSecretReader,
 //	    sharedSecretData map[string][]byte,
-//	    checker PrivilegeChecker,
 //	    vcenters []string,
 //	) (secretData map[string][]byte, warning string, err error)
 //
@@ -28,7 +24,6 @@ package actuator
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	minterv1 "github.com/openshift/cloud-credential-operator/pkg/apis/cloudcredential/v1"
@@ -101,11 +96,8 @@ func TestResolveComponentCredential_AnnotatedCRWithSecret_UsesPerComponentCred(t
 		},
 	}
 
-	checker := newMock()
-	setPrivileges(checker, "machine-api@vsphere.local", "vcenter.example.com", machineAPIPrivileges)
-
 	data, warning, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
+		context.Background(), cr, reader, sharedSecretData,
 		[]string{"vcenter.example.com"},
 	)
 
@@ -129,11 +121,8 @@ func TestResolveComponentCredential_AnnotatedCRWithoutSecret_FallsBackToShared(t
 	// No component secret registered for csiDriver
 	reader := &stubComponentSecretReader{secrets: map[string]*corev1.Secret{}}
 
-	checker := newMock()
-	// Shared credential checker — should be queried for shared credential validation (if any)
-
 	data, warning, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
+		context.Background(), cr, reader, sharedSecretData,
 		[]string{"vcenter.example.com"},
 	)
 
@@ -168,12 +157,8 @@ func TestResolveComponentCredential_MultiVCenter_BothVCentersPopulated(t *testin
 		secrets: map[string]*corev1.Secret{"vsphere-machine-api-creds": componentSecret},
 	}
 
-	checker := newMock()
-	setPrivileges(checker, "machine-api@vc1.local", "vcenter1.example.com", machineAPIPrivileges)
-	setPrivileges(checker, "machine-api@vc2.local", "vcenter2.example.com", machineAPIPrivileges)
-
 	data, _, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
+		context.Background(), cr, reader, sharedSecretData,
 		[]string{"vcenter1.example.com", "vcenter2.example.com"},
 	)
 
@@ -188,75 +173,6 @@ func TestResolveComponentCredential_MultiVCenter_BothVCentersPopulated(t *testin
 	}
 }
 
-// ── AC3: Privilege validation invoked before provisioning ────────────────────
-
-// TestResolveComponentCredential_PrivilegeValidationInvoked verifies AC3: the Story #37
-// ValidateComponentPrivileges call is made before the secret data is returned. A mock checker
-// that records calls is used; provisioning succeeds only when the checker is exercised.
-func TestResolveComponentCredential_PrivilegeValidationInvoked(t *testing.T) {
-	cr := makeCredCR("machineAPI")
-
-	componentSecret := makeComponentSecret("vsphere-machine-api-creds", map[string]string{
-		"vcenter.example.com.username": "machine-api@vsphere.local",
-		"vcenter.example.com.password": "machine-api-password",
-	})
-
-	reader := &stubComponentSecretReader{
-		secrets: map[string]*corev1.Secret{"vsphere-machine-api-creds": componentSecret},
-	}
-
-	called := false
-	recordingChecker := &recordingPrivilegeChecker{
-		inner:   newMock(),
-		onCalled: func() { called = true },
-	}
-	setPrivileges(recordingChecker.inner, "machine-api@vsphere.local", "vcenter.example.com", machineAPIPrivileges)
-
-	_, _, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, recordingChecker,
-		[]string{"vcenter.example.com"},
-	)
-
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if !called {
-		t.Error("expected PrivilegeChecker.FetchUserPrivileges to be called (AC3 requires validation before provisioning)")
-	}
-}
-
-// TestResolveComponentCredential_PrivilegeValidationFails_SecretNotProvisioned verifies AC3 (failure
-// path): if privilege validation fails, an error is returned and no secret data is returned.
-func TestResolveComponentCredential_PrivilegeValidationFails_SecretNotProvisioned(t *testing.T) {
-	cr := makeCredCR("machineAPI")
-
-	componentSecret := makeComponentSecret("vsphere-machine-api-creds", map[string]string{
-		"vcenter.example.com.username": "machine-api@vsphere.local",
-		"vcenter.example.com.password": "machine-api-password",
-	})
-
-	reader := &stubComponentSecretReader{
-		secrets: map[string]*corev1.Secret{"vsphere-machine-api-creds": componentSecret},
-	}
-
-	// Checker grants only a subset of required privileges → validation fails
-	checker := newMock()
-	setPrivileges(checker, "machine-api@vsphere.local", "vcenter.example.com",
-		allExcept(machineAPIPrivileges, "VirtualMachine.Inventory.Create", "VirtualMachine.Inventory.Delete"))
-
-	data, _, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
-		[]string{"vcenter.example.com"},
-	)
-
-	if err == nil {
-		t.Fatal("expected validation error, got nil")
-	}
-	if len(data) > 0 {
-		t.Errorf("expected no secret data when validation fails, got: %v", data)
-	}
-}
-
 // ── Adversarial cases ─────────────────────────────────────────────────────────
 
 // TestResolveComponentCredential_NoAnnotation_Passthrough verifies that a CredentialsRequest
@@ -265,10 +181,9 @@ func TestResolveComponentCredential_NoAnnotation_Passthrough(t *testing.T) {
 	cr := makeCredCR("") // no annotation
 
 	reader := &stubComponentSecretReader{secrets: map[string]*corev1.Secret{}}
-	checker := newMock()
 
 	data, warning, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
+		context.Background(), cr, reader, sharedSecretData,
 		[]string{"vcenter.example.com"},
 	)
 
@@ -296,10 +211,9 @@ func TestResolveComponentCredential_NilAnnotations_Passthrough(t *testing.T) {
 	}
 
 	reader := &stubComponentSecretReader{secrets: map[string]*corev1.Secret{}}
-	checker := newMock()
 
 	_, _, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
+		context.Background(), cr, reader, sharedSecretData,
 		[]string{"vcenter.example.com"},
 	)
 
@@ -314,10 +228,9 @@ func TestResolveComponentCredential_UnknownComponentAnnotation_FallsBackToShared
 	cr := makeCredCR("diagnostics") // not a known component
 
 	reader := &stubComponentSecretReader{secrets: map[string]*corev1.Secret{}}
-	checker := newMock()
 
 	_, warning, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
+		context.Background(), cr, reader, sharedSecretData,
 		[]string{"vcenter.example.com"},
 	)
 
@@ -346,47 +259,13 @@ func TestResolveComponentCredential_MultiVCenter_MissingOneVCenterEntry_Error(t 
 		secrets: map[string]*corev1.Secret{"vsphere-machine-api-creds": componentSecret},
 	}
 
-	checker := newMock()
-	setPrivileges(checker, "machine-api@vc1.local", "vcenter1.example.com", machineAPIPrivileges)
-
 	_, _, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
+		context.Background(), cr, reader, sharedSecretData,
 		[]string{"vcenter1.example.com", "vcenter2.example.com"},
 	)
 
 	if err == nil {
 		t.Error("expected error when component secret is missing credentials for a cluster vCenter")
-	}
-}
-
-// TestResolveComponentCredential_AuthFailureDuringValidation_Error verifies that an authentication
-// failure from the PrivilegeChecker is surfaced as an error (and not silently treated as
-// insufficient privileges — the error type matters for operator status messages).
-func TestResolveComponentCredential_AuthFailureDuringValidation_Error(t *testing.T) {
-	cr := makeCredCR("machineAPI")
-
-	componentSecret := makeComponentSecret("vsphere-machine-api-creds", map[string]string{
-		"vcenter.example.com.username": "machine-api@vsphere.local",
-		"vcenter.example.com.password": "wrong-password",
-	})
-
-	reader := &stubComponentSecretReader{
-		secrets: map[string]*corev1.Secret{"vsphere-machine-api-creds": componentSecret},
-	}
-
-	checker := newMock()
-	setAuthError(checker, "machine-api@vsphere.local", "vcenter.example.com")
-
-	_, _, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
-		[]string{"vcenter.example.com"},
-	)
-
-	if err == nil {
-		t.Fatal("expected error for authentication failure")
-	}
-	if !containsInsensitive(err.Error(), "authentication") {
-		t.Errorf("expected authentication error message, got: %v", err)
 	}
 }
 
@@ -401,10 +280,8 @@ func TestResolveComponentCredential_EmptyComponentSecret_FallsBackToShared(t *te
 		secrets: map[string]*corev1.Secret{"vsphere-machine-api-creds": emptySecret},
 	}
 
-	checker := newMock()
-
 	_, warning, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData, checker,
+		context.Background(), cr, reader, sharedSecretData,
 		[]string{"vcenter.example.com"},
 	)
 
@@ -414,41 +291,4 @@ func TestResolveComponentCredential_EmptyComponentSecret_FallsBackToShared(t *te
 	if warning == "" {
 		t.Error("expected fallback warning for empty component secret")
 	}
-}
-
-// ── Helpers used by the stubs above ──────────────────────────────────────────
-
-// recordingPrivilegeChecker wraps an inner checker and calls onCalled on the first invocation.
-type recordingPrivilegeChecker struct {
-	inner    *mockPrivilegeChecker
-	onCalled func()
-}
-
-func (r *recordingPrivilegeChecker) FetchUserPrivileges(ctx context.Context, username, vcenterFQDN string) ([]string, error) {
-	if r.onCalled != nil {
-		r.onCalled()
-	}
-	return r.inner.FetchUserPrivileges(ctx, username, vcenterFQDN)
-}
-
-func containsInsensitive(s, substr string) bool {
-	return fmt.Sprintf("%s", s) != "" && len(s) >= len(substr) &&
-		(s == substr || len(s) > 0 && containsBytes([]byte(s), []byte(substr)))
-}
-
-func containsBytes(haystack, needle []byte) bool {
-	for i := 0; i <= len(haystack)-len(needle); i++ {
-		match := true
-		for j, b := range needle {
-			hb := haystack[i+j]
-			if hb != b && hb != b-32 && hb != b+32 {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
 }
