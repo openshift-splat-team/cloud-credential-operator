@@ -8,7 +8,6 @@
 //	    cr *minterv1.CredentialsRequest,
 //	    componentSecretReader ComponentSecretReader,
 //	    sharedSecretData map[string][]byte,
-//	    vcenters []string,
 //	) (secretData map[string][]byte, warning string, err error)
 //
 // ComponentSecretReader is an interface (or func) that looks up a named secret from kube-system.
@@ -98,7 +97,6 @@ func TestResolveComponentCredential_AnnotatedCRWithSecret_UsesPerComponentCred(t
 
 	data, warning, err := resolveVSphereCredentials(
 		context.Background(), cr, reader, sharedSecretData,
-		[]string{"vcenter.example.com"},
 	)
 
 	if err != nil {
@@ -123,7 +121,6 @@ func TestResolveComponentCredential_AnnotatedCRWithoutSecret_FallsBackToShared(t
 
 	data, warning, err := resolveVSphereCredentials(
 		context.Background(), cr, reader, sharedSecretData,
-		[]string{"vcenter.example.com"},
 	)
 
 	if err != nil {
@@ -159,7 +156,6 @@ func TestResolveComponentCredential_MultiVCenter_BothVCentersPopulated(t *testin
 
 	data, _, err := resolveVSphereCredentials(
 		context.Background(), cr, reader, sharedSecretData,
-		[]string{"vcenter1.example.com", "vcenter2.example.com"},
 	)
 
 	if err != nil {
@@ -184,7 +180,6 @@ func TestResolveComponentCredential_NoAnnotation_Passthrough(t *testing.T) {
 
 	data, warning, err := resolveVSphereCredentials(
 		context.Background(), cr, reader, sharedSecretData,
-		[]string{"vcenter.example.com"},
 	)
 
 	if err != nil {
@@ -214,7 +209,6 @@ func TestResolveComponentCredential_NilAnnotations_Passthrough(t *testing.T) {
 
 	_, _, err := resolveVSphereCredentials(
 		context.Background(), cr, reader, sharedSecretData,
-		[]string{"vcenter.example.com"},
 	)
 
 	if err != nil {
@@ -231,7 +225,6 @@ func TestResolveComponentCredential_UnknownComponentAnnotation_FallsBackToShared
 
 	_, warning, err := resolveVSphereCredentials(
 		context.Background(), cr, reader, sharedSecretData,
-		[]string{"vcenter.example.com"},
 	)
 
 	if err != nil {
@@ -239,33 +232,6 @@ func TestResolveComponentCredential_UnknownComponentAnnotation_FallsBackToShared
 	}
 	if warning == "" {
 		t.Error("expected a fallback warning for unknown component")
-	}
-}
-
-// TestResolveComponentCredential_MultiVCenter_MissingOneVCenterEntry_Error verifies that when a
-// component secret is present but lacks credentials for one of the cluster's vCenters, an error
-// is returned (not silent omission — the operator would fail to connect to that vCenter).
-func TestResolveComponentCredential_MultiVCenter_MissingOneVCenterEntry_Error(t *testing.T) {
-	cr := makeCredCR("machineAPI")
-
-	// Secret only has vcenter1; cluster has vcenter1 + vcenter2
-	componentSecret := makeComponentSecret("vsphere-machine-api-creds", map[string]string{
-		"vcenter1.example.com.username": "machine-api@vc1.local",
-		"vcenter1.example.com.password": "password1",
-		// vcenter2 entries absent
-	})
-
-	reader := &stubComponentSecretReader{
-		secrets: map[string]*corev1.Secret{"vsphere-machine-api-creds": componentSecret},
-	}
-
-	_, _, err := resolveVSphereCredentials(
-		context.Background(), cr, reader, sharedSecretData,
-		[]string{"vcenter1.example.com", "vcenter2.example.com"},
-	)
-
-	if err == nil {
-		t.Error("expected error when component secret is missing credentials for a cluster vCenter")
 	}
 }
 
@@ -282,7 +248,6 @@ func TestResolveComponentCredential_EmptyComponentSecret_FallsBackToShared(t *te
 
 	_, warning, err := resolveVSphereCredentials(
 		context.Background(), cr, reader, sharedSecretData,
-		[]string{"vcenter.example.com"},
 	)
 
 	if err != nil {

@@ -43,7 +43,6 @@ func resolveVSphereCredentials(
 	cr *minterv1.CredentialsRequest,
 	componentSecretReader ComponentSecretReader,
 	sharedSecretData map[string][]byte,
-	vcenters []string,
 ) (secretData map[string][]byte, warning string, err error) {
 	component := cr.Annotations[vsphereComponentAnnotationKey]
 	if component == "" {
@@ -58,13 +57,6 @@ func resolveVSphereCredentials(
 		}
 
 		if secret != nil && len(secret.Data) > 0 {
-			// Verify credentials exist for every cluster vCenter before returning.
-			for _, vcenter := range vcenters {
-				if _, ok := secret.Data[vcenter+".username"]; !ok {
-					return nil, "", fmt.Errorf("component secret %q missing credentials for vCenter %q", secretName, vcenter)
-				}
-			}
-
 			return secret.Data, "", nil
 		}
 	}
