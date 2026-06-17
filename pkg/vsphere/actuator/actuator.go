@@ -207,7 +207,60 @@ func (a *VSphereActuator) sync(ctx context.Context, cr *minterv1.CredentialsRequ
 }
 
 func (a *VSphereActuator) syncPassthrough(ctx context.Context, cr *minterv1.CredentialsRequest, cloudCredsSecret *corev1.Secret, logger log.FieldLogger) error {
-	err := a.syncTargetSecret(ctx, cr, cloudCredsSecret.Data, logger)
+	// Discover vCenter topology
+	topology, err := getVCenterTopology(ctx, a.Client)
+	if err != nil {
+		logger.WithError(err).Warn("failed to discover vCenter topology, falling back to single-vCenter mode")
+		// Fall back to simple passthrough for single-vCenter or when topology discovery fails
+		err := a.syncTargetSecret(ctx, cr, cloudCredsSecret.Data, logger)
+		if err != nil {
+			msg := "error creating/updating secret"
+			logger.WithError(err).Error(msg)
+			return &actuatoriface.ActuatorError{
+				ErrReason: minterv1.CredentialsProvisionFailure,
+				Message:   fmt.Sprintf("%v: %v", msg, err),
+			}
+		}
+		return nil
+	}
+
+	// Transform credentials for multi-vCenter if needed
+	secretData := cloudCredsSecret.Data
+	if topology.isMultiVCenter() {
+		logger.WithField("vcenterCount", len(topology.VCenters)).Info("multi-vCenter deployment detected, transforming credentials")
+		secretData, err = a.transformToMultiVCenterFormat(cloudCredsSecret, topology, logger)
+		if err != nil {
+			msg := "error transforming credentials for multi-vCenter"
+			logger.WithError(err).Error(msg)
+			return &actuatoriface.ActuatorError{
+				ErrReason: minterv1.CredentialsProvisionFailure,
+				Message:   fmt.Sprintf("%v: %v", msg, err),
+			}
+		}
+
+		// Validate privileges per vCenter
+		requiredPrivileges := []string{
+			"VirtualMachine.Config.AddNewDisk",
+			"VirtualMachine.Config.AddRemoveDevice",
+			"VirtualMachine.Inventory.Create",
+			"VirtualMachine.Inventory.Delete",
+			"Datastore.AllocateSpace",
+			"Network.Assign",
+			"Resource.AssignVMToPool",
+		}
+		validationResult, err := validatePrivilegesPerVCenter(ctx, &corev1.Secret{Data: secretData}, topology, requiredPrivileges)
+		if err != nil {
+			logger.WithError(err).Warn("privilege validation failed")
+		}
+		if validationResult != nil && !validationResult.AllValid {
+			errorMsg := formatPerVCenterError(validationResult)
+			logger.Warn(errorMsg)
+			// Log warning but don't block - let vSphere API enforce permissions
+			// This allows for gradual rollout and avoids breaking existing deployments
+		}
+	}
+
+	err = a.syncTargetSecret(ctx, cr, secretData, logger)
 	if err != nil {
 		msg := "error creating/updating secret"
 		logger.WithError(err).Error(msg)
@@ -218,6 +271,43 @@ func (a *VSphereActuator) syncPassthrough(ctx context.Context, cr *minterv1.Cred
 	}
 
 	return nil
+}
+
+// transformToMultiVCenterFormat transforms root credentials into multi-vCenter format
+func (a *VSphereActuator) transformToMultiVCenterFormat(cloudCredsSecret *corev1.Secret, topology *VCenterTopology, logger log.FieldLogger) (map[string][]byte, error) {
+	// Extract base credentials from root secret
+	// Root secret format: <server>.username, <server>.password (from install-config.yaml)
+	// We need to create per-vCenter credentials: <vcenter-fqdn>.username, <vcenter-fqdn>.password
+
+	multiVCenterData := make(map[string][]byte)
+
+	for _, vcenterFQDN := range topology.VCenters {
+		vcLogger := logger.WithField("vcenter", vcenterFQDN)
+
+		// Look for credentials in root secret with this vCenter's FQDN
+		usernameKey := fmt.Sprintf("%s.username", vcenterFQDN)
+		passwordKey := fmt.Sprintf("%s.password", vcenterFQDN)
+
+		username, usernameExists := cloudCredsSecret.Data[usernameKey]
+		password, passwordExists := cloudCredsSecret.Data[passwordKey]
+
+		if !usernameExists || !passwordExists {
+			vcLogger.Warn("credentials not found for vCenter in root secret, skipping")
+			continue
+		}
+
+		// Copy to multi-vCenter format (same key format, but explicitly for component consumption)
+		multiVCenterData[usernameKey] = username
+		multiVCenterData[passwordKey] = password
+		vcLogger.WithField("usernameKey", usernameKey).Debug("transformed credentials for vCenter")
+	}
+
+	if len(multiVCenterData) == 0 {
+		return nil, fmt.Errorf("no valid credentials found for any vCenter in topology")
+	}
+
+	logger.WithField("vcenterCount", len(multiVCenterData)/2).Info("credentials transformed for multi-vCenter")
+	return multiVCenterData, nil
 }
 
 func (a *VSphereActuator) updateProviderStatus(ctx context.Context, logger log.FieldLogger, cr *minterv1.CredentialsRequest, vSphereStatus *minterv1.VSphereProviderStatus) error {
